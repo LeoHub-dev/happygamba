@@ -9,15 +9,14 @@ import {
 } from '../economy/engine.js';
 import { createRng } from '../util/rng.js';
 import { buildCascades } from './slots-clusters.js';
+import { slotsStatements } from './slots-statements.js';
 
 function getConfig(): EconomyConfig {
-  return getDb().prepare('SELECT * FROM economy_config WHERE id = 1').get() as EconomyConfig;
+  return slotsStatements().getConfig.get() as EconomyConfig;
 }
 
 function getEconomy(userId: string): UserEconomy {
-  const row = getDb()
-    .prepare('SELECT * FROM user_economy WHERE user_id = ?')
-    .get(userId) as UserEconomy | undefined;
+  const row = slotsStatements().getEconomy.get(userId) as UserEconomy | undefined;
   if (!row) throw new Error('Economy not found');
   return row;
 }
@@ -45,13 +44,10 @@ export function spinSlots(userId: string, bet: number) {
   });
 
   const updated = applyBetResult(economy, bet, totalPayout, config);
-  const db = getDb();
+  const s = slotsStatements();
 
-  db.transaction(() => {
-    db.prepare(
-      `UPDATE user_economy SET balance=?, peak_balance=?, phase=?, session_wins=?, session_losses=?,
-       total_bets=?, last_bet_at=? WHERE user_id=?`
-    ).run(
+  getDb().transaction(() => {
+    s.updateEconomy.run(
       updated.balance,
       updated.peak_balance,
       updated.phase,
@@ -61,10 +57,7 @@ export function spinSlots(userId: string, bet: number) {
       updated.last_bet_at,
       userId
     );
-    db.prepare(
-      `INSERT INTO bet_history (id, user_id, game_type, bet_amount, payout, balance_after, phase, metadata)
-       VALUES (?, ?, 'slots', ?, ?, ?, ?, ?)`
-    ).run(
+    s.insertBet.run(
       uuid(),
       userId,
       bet,

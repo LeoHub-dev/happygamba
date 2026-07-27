@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
@@ -31,6 +32,7 @@ class ReelColumnState extends State<ReelColumn>
   List<String> _strip = [];
   double _cellHeight = 0;
   bool _spinning = false;
+  Future<void>? _rollingFuture;
 
   @override
   void initState() {
@@ -60,7 +62,6 @@ class ReelColumnState extends State<ReelColumn>
 
   Future<void> _ensureLaidOut() async {
     if (_cellHeight > 0) return;
-    // Wait until LayoutBuilder has measured the reel viewport.
     for (var i = 0; i < 8; i++) {
       await SchedulerBinding.instance.endOfFrame;
       if (!mounted) return;
@@ -70,20 +71,20 @@ class ReelColumnState extends State<ReelColumn>
   }
 
   List<String> get _currentVisible {
+    if (_cellHeight > 0 && _strip.length >= widget.rows && _controller.value > 0) {
+      final idx = (_controller.value / _cellHeight)
+          .floor()
+          .clamp(0, _strip.length - widget.rows);
+      return _strip.sublist(idx, idx + widget.rows);
+    }
     if (_strip.length >= widget.rows) {
       return _strip.sublist(0, widget.rows);
     }
     return List<String>.from(widget.symbols);
   }
 
-  /// Spins the reel so [target] lands in the viewport.
-  /// Always rolls fillers so losses still look like a real spin.
-  Future<void> spinTo(
-    List<String> target, {
-    int fillerCount = 16,
-    Duration duration = const Duration(milliseconds: 1150),
-  }) async {
-    assert(target.length == widget.rows);
+  /// Begin rolling fillers immediately (does not wait for API).
+  Future<void> startRolling({int fillerCount = 64}) async {
     await _ensureLaidOut();
     if (!mounted || _cellHeight <= 0) return;
 
@@ -95,20 +96,54 @@ class ReelColumnState extends State<ReelColumn>
     );
 
     setState(() {
-      _strip = [...start, ...fillers, ...target];
+      _strip = [...start, ...fillers];
       _spinning = true;
       _controller.value = 0;
     });
-
-    // One frame so the new strip is built before animating.
     await SchedulerBinding.instance.endOfFrame;
     if (!mounted) return;
 
-    final endOffset = (start.length + fillers.length) * _cellHeight;
+    // Long linear roll — [landOn] will interrupt when the API responds.
+    _rollingFuture = _controller.animateTo(
+      fillers.length * _cellHeight * 0.85,
+      duration: const Duration(milliseconds: 3500),
+      curve: Curves.linear,
+    );
+    // Don't await — landOn stops this early.
+    unawaited(_rollingFuture!.catchError((_) {}));
+  }
+
+  /// Interrupt rolling and decelerate onto [target].
+  Future<void> landOn(
+    List<String> target, {
+    int extraFillers = 10,
+    Duration duration = const Duration(milliseconds: 650),
+  }) async {
+    assert(target.length == widget.rows);
+    await _ensureLaidOut();
+    if (!mounted || _cellHeight <= 0) return;
+
+    final visible = _currentVisible;
+    _controller.stop();
+
+    final rng = Random();
+    final fillers = List.generate(
+      extraFillers,
+      (_) => kSlotSymbols[rng.nextInt(kSlotSymbols.length)],
+    );
+
+    setState(() {
+      _strip = [...visible, ...fillers, ...target];
+      _spinning = true;
+      _controller.value = 0;
+    });
+    await SchedulerBinding.instance.endOfFrame;
+    if (!mounted) return;
+
     await _controller.animateTo(
-      endOffset,
+      (visible.length + fillers.length) * _cellHeight,
       duration: duration,
-      curve: const Cubic(0.12, 0.7, 0.2, 1.0),
+      curve: const Cubic(0.05, 0.7, 0.15, 1.0),
     );
 
     if (!mounted) return;
@@ -117,6 +152,22 @@ class ReelColumnState extends State<ReelColumn>
       _controller.value = 0;
       _spinning = false;
     });
+  }
+
+  /// Full spin to [target] (used when API result is already available).
+  Future<void> spinTo(
+    List<String> target, {
+    int fillerCount = 16,
+    Duration duration = const Duration(milliseconds: 1150),
+  }) async {
+    await startRolling(fillerCount: fillerCount + 20);
+    // Tiny beat so motion is visible even if land is immediate.
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    await landOn(
+      target,
+      extraFillers: 8 + (fillerCount ~/ 4),
+      duration: duration,
+    );
   }
 
   /// New symbols enter from above and fall into place (cascade refill).
@@ -152,6 +203,16 @@ class ReelColumnState extends State<ReelColumn>
     });
   }
 
+  Future<void> abortToIdle() async {
+    _controller.stop();
+    if (!mounted) return;
+    setState(() {
+      _strip = List<String>.from(widget.symbols);
+      _controller.value = 0;
+      _spinning = false;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
@@ -162,7 +223,6 @@ class ReelColumnState extends State<ReelColumn>
         final displayStrip =
             _strip.isEmpty ? List<String>.from(widget.symbols) : _strip;
 
-        // Only build tiles near the viewport — avoids Column overflow on long strips.
         final first = (_cellHeight > 0)
             ? (offset / _cellHeight).floor().clamp(0, displayStrip.length - 1)
             : 0;
