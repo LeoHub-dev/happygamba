@@ -167,9 +167,10 @@ class SlotsResult {
 }
 
 class CascadeStep {
-  CascadeStep({required this.grid, required this.wins});
+  CascadeStep({required this.grid, required this.wins, this.removed = const []});
   final List<List<String>> grid;
   final List<WinCell> wins;
+  final List<(int, int)> removed;
 
   factory CascadeStep.fromJson(Map<String, dynamic> json) => CascadeStep(
         grid: (json['grid'] as List)
@@ -178,16 +179,38 @@ class CascadeStep {
         wins: (json['wins'] as List? ?? [])
             .map((e) => WinCell.fromJson(e as Map<String, dynamic>))
             .toList(),
+        removed: (json['removed'] as List? ?? [])
+            .map((e) {
+              final pair = e as List;
+              return ((pair[0] as num).toInt(), (pair[1] as num).toInt());
+            })
+            .toList(),
       );
+
+  Set<(int, int)> get winningCells {
+    final cells = <(int, int)>{};
+    for (final win in wins) {
+      cells.addAll(win.cells);
+    }
+    if (cells.isEmpty) cells.addAll(removed);
+    return cells;
+  }
 }
 
 class WinCell {
-  WinCell({required this.payout, required this.mult});
+  WinCell({required this.payout, required this.mult, this.cells = const []});
   final int payout;
   final double mult;
+  final List<(int, int)> cells;
   factory WinCell.fromJson(Map<String, dynamic> json) => WinCell(
         payout: (json['payout'] as num).toInt(),
         mult: (json['mult'] as num).toDouble(),
+        cells: (json['cells'] as List? ?? [])
+            .map((e) {
+              final pair = e as List;
+              return ((pair[0] as num).toInt(), (pair[1] as num).toInt());
+            })
+            .toList(),
       );
 }
 

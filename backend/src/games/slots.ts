@@ -7,6 +7,7 @@ import {
   type EconomyConfig,
   type UserEconomy,
 } from '../economy/engine.js';
+import { createRng } from '../util/rng.js';
 
 const SYMBOLS = ['10', 'J', 'Q', 'K', 'A', 'HAT', 'BOOT', 'MUG', 'DICE', 'W', 'FS'];
 
@@ -34,13 +35,16 @@ function randomGrid(rng: () => number): string[][] {
   return grid;
 }
 
-function generateWinningGrid(symbol: string, rng: () => number): string[][] {
+function generateWinningGrid(
+  symbol: string,
+  rng: () => number
+): { grid: string[][]; winRow: number } {
   const grid = randomGrid(rng);
-  const row = Math.floor(rng() * 5);
+  const winRow = Math.floor(rng() * 5);
   for (let c = 0; c < 3; c++) {
-    grid[row][c] = symbol;
+    grid[winRow][c] = symbol;
   }
-  return grid;
+  return { grid, winRow };
 }
 
 export interface CascadeStep {
@@ -57,17 +61,14 @@ export function spinSlots(userId: string, bet: number) {
   if (economy.balance < bet) throw new Error('Insufficient balance');
 
   const config = getConfig();
-  let seed = Date.now() ^ (Math.random() * 0xffffffff);
-  const rng = () => {
-    seed = (seed * 16807 + 1) % 2147483647;
-    return seed / 2147483647;
-  };
+  const rng = createRng();
 
   const decision = decideOutcome(economy, bet, config, rng);
   const cascades: CascadeStep[] = [];
   let totalPayout = 0;
 
-  const steps = decision.shouldWin ? 1 + Math.floor(rng() * 2) : 1;
+  // Always at least one cascade so the client always has a reel result to show.
+  const steps = Math.max(1, decision.shouldWin ? 1 + Math.floor(rng() * 2) : 1);
   for (let s = 0; s < steps; s++) {
     const stepBet = s === 0 ? bet : 0;
     const stepDecision =
@@ -76,14 +77,19 @@ export function spinSlots(userId: string, bet: number) {
     totalPayout += payout;
 
     const symbol = SYMBOLS[Math.floor(rng() * 6)];
-    const grid = stepDecision.shouldWin ? generateWinningGrid(symbol, rng) : randomGrid(rng);
-    const winCells: [number, number][] = stepDecision.shouldWin
-      ? [
-          [Math.floor(rng() * 5), 0],
-          [Math.floor(rng() * 5), 1],
-          [Math.floor(rng() * 5), 2],
-        ]
-      : [];
+    let grid: string[][];
+    let winCells: [number, number][] = [];
+    if (stepDecision.shouldWin) {
+      const generated = generateWinningGrid(symbol, rng);
+      grid = generated.grid;
+      winCells = [
+        [generated.winRow, 0],
+        [generated.winRow, 1],
+        [generated.winRow, 2],
+      ];
+    } else {
+      grid = randomGrid(rng);
+    }
 
     cascades.push({
       grid,
