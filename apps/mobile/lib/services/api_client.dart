@@ -198,10 +198,16 @@ class CascadeStep {
 }
 
 class WinCell {
-  WinCell({required this.payout, required this.mult, this.cells = const []});
+  WinCell({
+    required this.payout,
+    required this.mult,
+    this.cells = const [],
+    this.symbol,
+  });
   final int payout;
   final double mult;
   final List<(int, int)> cells;
+  final String? symbol;
   factory WinCell.fromJson(Map<String, dynamic> json) => WinCell(
         payout: (json['payout'] as num).toInt(),
         mult: (json['mult'] as num).toDouble(),
@@ -211,6 +217,7 @@ class WinCell {
               return ((pair[0] as num).toInt(), (pair[1] as num).toInt());
             })
             .toList(),
+        symbol: json['symbol'] as String?,
       );
 }
 
