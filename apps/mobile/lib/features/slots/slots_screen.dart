@@ -67,18 +67,30 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
     throw StateError('Reel $col not ready');
   }
 
-  Future<void> _spinReelsTo(List<List<String>> target) async {
+  Future<void> _startAllRolling() async {
     final futures = <Future<void>>[];
     for (var c = 0; c < _cols; c++) {
       final col = c;
       futures.add(() async {
-        await Future<void>.delayed(Duration(milliseconds: 80 * col));
+        await Future<void>.delayed(Duration(milliseconds: 40 * col));
         final reel = await _reelState(col);
-        // Always enough fillers so win AND loss spins are visibly rolling.
-        await reel.spinTo(
+        await reel.startRolling(fillerCount: 56 + col * 4);
+      }());
+    }
+    await Future.wait(futures);
+  }
+
+  Future<void> _landAllOn(List<List<String>> target) async {
+    final futures = <Future<void>>[];
+    for (var c = 0; c < _cols; c++) {
+      final col = c;
+      futures.add(() async {
+        await Future<void>.delayed(Duration(milliseconds: 70 * col));
+        final reel = await _reelState(col);
+        await reel.landOn(
           _columnSymbols(target, col),
-          fillerCount: 16 + col * 2,
-          duration: Duration(milliseconds: 1000 + col * 100),
+          extraFillers: 8 + col,
+          duration: Duration(milliseconds: 550 + col * 80),
         );
       }());
     }
@@ -101,14 +113,8 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
     await Future.wait(futures);
   }
 
-  Future<void> _playCascade(CascadeStep cascade, {required bool isFirst}) async {
-    if (isFirst) {
-      await _spinReelsTo(cascade.grid);
-    } else {
-      await _dropReelsTo(cascade.grid);
-    }
+  Future<void> _showCascadeResult(CascadeStep cascade) async {
     if (!mounted) return;
-
     final hasWin = cascade.wins.isNotEmpty;
     setState(() {
       _grid = cascade.grid.map((row) => List<String>.from(row)).toList();
@@ -120,9 +126,8 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
       }
     });
 
-    // Hold landed result so the new grid is readable (especially losses).
     await Future<void>.delayed(
-      Duration(milliseconds: hasWin ? 900 : 500),
+      Duration(milliseconds: hasWin ? 700 : 350),
     );
 
     if (!mounted) return;
@@ -142,11 +147,28 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
     });
 
     try {
-      final result = await ref.read(apiClientProvider).spinSlots(_bet);
+      // 1) Reels start moving immediately — don't wait on the network.
+      final rollStarted = DateTime.now();
+      final rolling = _startAllRolling();
+      // 2) Fetch result in parallel.
+      final apiFuture = ref.read(apiClientProvider).spinSlots(_bet);
+
+      await rolling;
+      final result = await apiFuture;
+      if (!mounted) return;
+
+      // Keep a brief minimum roll so instant API responses still feel snappy, not abrupt.
+      const minRoll = Duration(milliseconds: 280);
+      final elapsed = DateTime.now().difference(rollStarted);
+      if (elapsed < minRoll) {
+        await Future<void>.delayed(minRoll - elapsed);
+      }
       if (!mounted) return;
 
       if (result.cascades.isEmpty) {
-        // Backend should always return >=1 cascade; never surface Bad state to UI.
+        for (var c = 0; c < _cols; c++) {
+          await _reelKeys[c].currentState?.abortToIdle();
+        }
         ref.read(authProvider.notifier).updateBalance(result.balance);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -156,13 +178,20 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
         return;
       }
 
-      for (var i = 0; i < result.cascades.length; i++) {
+      // 3) Land first cascade (API already back; reels have been rolling).
+      final first = result.cascades.first;
+      await _landAllOn(first.grid);
+      await _showCascadeResult(first);
+
+      // 4) Extra cascades tumble in.
+      for (var i = 1; i < result.cascades.length; i++) {
         if (!mounted) return;
-        await _playCascade(result.cascades[i], isFirst: i == 0);
+        final cascade = result.cascades[i];
+        await _dropReelsTo(cascade.grid);
+        await _showCascadeResult(cascade);
       }
 
       if (!mounted) return;
-      // Sync grid to final cascade in case a reel finished early.
       setState(() {
         _grid = result.cascades.last.grid
             .map((row) => List<String>.from(row))
@@ -174,6 +203,9 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
         await AdsService.showInterstitial();
       }
     } catch (e) {
+      for (var c = 0; c < _cols; c++) {
+        await _reelKeys[c].currentState?.abortToIdle();
+      }
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
       }

@@ -5,6 +5,7 @@ import { getUserProfile, loginUser, registerUser, syncSocialUser } from './auth/
 import { getDb } from './db.js';
 import { startBlackjack, blackjackAction } from './games/blackjack.js';
 import { spinSlots } from './games/slots.js';
+import { timingMiddleware } from './middleware/timing.js';
 import {
   claimDailyBonus,
   getLiveBetsFeed,
@@ -16,6 +17,7 @@ const PORT = process.env.PORT ?? 8000;
 
 app.use(cors());
 app.use(express.json());
+app.use(timingMiddleware);
 
 getDb();
 
