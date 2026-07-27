@@ -34,7 +34,7 @@ casino, slots, blackjack, entretenimiento, moneda ficticia, simulación
 ### Backend
 - `JWT_SECRET` — secreto fuerte
 - `DATABASE_PATH` — PostgreSQL en prod (migrar desde SQLite)
-- `PORT` — 3000 o según hosting
+- `PORT` — 8000 o según hosting
 
 ### Flutter
 ```bash

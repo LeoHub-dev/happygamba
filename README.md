@@ -21,7 +21,7 @@ happygamba/
 ```bash
 cd backend
 npm install
-npm run dev          # http://localhost:3000
+npm run dev          # http://localhost:8000
 npm test             # tests economía
 ```
 
@@ -30,7 +30,8 @@ npm test             # tests economía
 ```bash
 cd apps/mobile
 flutter pub get
-flutter run --dart-define=API_BASE_URL=http://localhost:3000
+flutter run --dart-define=API_BASE_URL=http://localhost:8000
+# Android emulator: http://10.0.2.2:8000
 ```
 
 ## Auth
