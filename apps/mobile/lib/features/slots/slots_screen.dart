@@ -146,7 +146,14 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
       if (!mounted) return;
 
       if (result.cascades.isEmpty) {
-        throw StateError('Spin returned no cascades');
+        // Backend should always return >=1 cascade; never surface Bad state to UI.
+        ref.read(authProvider.notifier).updateBalance(result.balance);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('No se pudo animar el spin. Intenta de nuevo.')),
+          );
+        }
+        return;
       }
 
       for (var i = 0; i < result.cascades.length; i++) {

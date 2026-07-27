@@ -7,6 +7,7 @@ import {
   type EconomyConfig,
   type UserEconomy,
 } from '../economy/engine.js';
+import { createRng } from '../util/rng.js';
 
 const SYMBOLS = ['10', 'J', 'Q', 'K', 'A', 'HAT', 'BOOT', 'MUG', 'DICE', 'W', 'FS'];
 
@@ -60,17 +61,14 @@ export function spinSlots(userId: string, bet: number) {
   if (economy.balance < bet) throw new Error('Insufficient balance');
 
   const config = getConfig();
-  let seed = Date.now() ^ (Math.random() * 0xffffffff);
-  const rng = () => {
-    seed = (seed * 16807 + 1) % 2147483647;
-    return seed / 2147483647;
-  };
+  const rng = createRng();
 
   const decision = decideOutcome(economy, bet, config, rng);
   const cascades: CascadeStep[] = [];
   let totalPayout = 0;
 
-  const steps = decision.shouldWin ? 1 + Math.floor(rng() * 2) : 1;
+  // Always at least one cascade so the client always has a reel result to show.
+  const steps = Math.max(1, decision.shouldWin ? 1 + Math.floor(rng() * 2) : 1);
   for (let s = 0; s < steps; s++) {
     const stepBet = s === 0 ? bet : 0;
     const stepDecision =

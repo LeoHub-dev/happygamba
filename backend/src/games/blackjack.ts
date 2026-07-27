@@ -6,6 +6,7 @@ import {
   type EconomyConfig,
   type UserEconomy,
 } from '../economy/engine.js';
+import { createRng } from '../util/rng.js';
 import {
   cardValue,
   generateHandForOutcome,
@@ -44,11 +45,7 @@ export function startBlackjack(userId: string, bet: number) {
   if (economy.balance < bet) throw new Error('Insufficient balance');
 
   const config = getConfig();
-  let seed = Date.now();
-  const rng = () => {
-    seed = (seed * 16807 + 1) % 2147483647;
-    return seed / 2147483647;
-  };
+  const rng = createRng();
 
   const decision = decideOutcome(economy, bet, config, rng);
   const target = decision.shouldWin ? 'win' : rng() < 0.1 ? 'push' : 'lose';
@@ -89,11 +86,7 @@ export function blackjackAction(userId: string, sessionId: string, action: 'hit'
     .prepare('SELECT * FROM blackjack_sessions WHERE id = ?')
     .get(sessionId) as SessionRow;
 
-  let seed = Date.now();
-  const rng = () => {
-    seed = (seed * 16807 + 1) % 2147483647;
-    return seed / 2147483647;
-  };
+  const rng = createRng();
 
   if (action === 'hit') {
     player.push(randomCard(rng));
