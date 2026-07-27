@@ -1,0 +1,19 @@
+# Dependencies
+**/node_modules/
+**/.dart_tool/
+**/build/
+
+# Backend
+backend/data/
+backend/dist/
+
+# IDE
+.idea/
+*.iml
+
+# Env
+.env
+.env.*
+
+# OS
+.DS_Store
