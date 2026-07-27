@@ -8,17 +8,16 @@ import {
   type UserEconomy,
 } from '../economy/engine.js';
 import { createRng } from '../util/rng.js';
+import { slotsStatements } from './slots-statements.js';
 
 const SYMBOLS = ['10', 'J', 'Q', 'K', 'A', 'HAT', 'BOOT', 'MUG', 'DICE', 'W', 'FS'];
 
 function getConfig(): EconomyConfig {
-  return getDb().prepare('SELECT * FROM economy_config WHERE id = 1').get() as EconomyConfig;
+  return slotsStatements().getConfig.get() as EconomyConfig;
 }
 
 function getEconomy(userId: string): UserEconomy {
-  const row = getDb()
-    .prepare('SELECT * FROM user_economy WHERE user_id = ?')
-    .get(userId) as UserEconomy;
+  const row = slotsStatements().getEconomy.get(userId) as UserEconomy | undefined;
   if (!row) throw new Error('Economy not found');
   return row;
 }
@@ -56,7 +55,6 @@ export interface CascadeStep {
 export function spinSlots(userId: string, bet: number) {
   if (bet < 100 || bet > 100000) throw new Error('Bet must be between 100 and 100000');
 
-  const db = getDb();
   const economy = getEconomy(userId);
   if (economy.balance < bet) throw new Error('Insufficient balance');
 
@@ -70,7 +68,6 @@ export function spinSlots(userId: string, bet: number) {
   // Always at least one cascade so the client always has a reel result to show.
   const steps = Math.max(1, decision.shouldWin ? 1 + Math.floor(rng() * 2) : 1);
   for (let s = 0; s < steps; s++) {
-    const stepBet = s === 0 ? bet : 0;
     const stepDecision =
       s === 0 ? decision : { ...decision, shouldWin: rng() < 0.4, multiplierMin: 1, multiplierMax: 2 };
     const payout = s === 0 ? calculatePayout(bet, stepDecision, rng) : Math.floor(bet * (1 + rng()));
@@ -101,12 +98,10 @@ export function spinSlots(userId: string, bet: number) {
   }
 
   const updated = applyBetResult(economy, bet, totalPayout, config);
+  const s = slotsStatements();
 
-  db.transaction(() => {
-    db.prepare(
-      `UPDATE user_economy SET balance=?, peak_balance=?, phase=?, session_wins=?, session_losses=?,
-       total_bets=?, last_bet_at=? WHERE user_id=?`
-    ).run(
+  getDb().transaction(() => {
+    s.updateEconomy.run(
       updated.balance,
       updated.peak_balance,
       updated.phase,
@@ -116,10 +111,7 @@ export function spinSlots(userId: string, bet: number) {
       updated.last_bet_at,
       userId
     );
-    db.prepare(
-      `INSERT INTO bet_history (id, user_id, game_type, bet_amount, payout, balance_after, phase, metadata)
-       VALUES (?, ?, 'slots', ?, ?, ?, ?, ?)`
-    ).run(
+    s.insertBet.run(
       uuid(),
       userId,
       bet,
