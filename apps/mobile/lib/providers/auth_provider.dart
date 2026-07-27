@@ -25,7 +25,6 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserProfile?>> {
   }
 
   Future<void> register(String username, String password) async {
-    state = const AsyncValue.loading();
     try {
       await _api.register(username, password);
       final profile = await _api.getProfile();
@@ -37,7 +36,6 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserProfile?>> {
   }
 
   Future<void> login(String username, String password) async {
-    state = const AsyncValue.loading();
     try {
       await _api.login(username, password);
       final profile = await _api.getProfile();
@@ -49,7 +47,6 @@ class AuthNotifier extends StateNotifier<AsyncValue<UserProfile?>> {
   }
 
   Future<void> socialLogin(String provider) async {
-    state = const AsyncValue.loading();
     try {
       final uid = 'demo_${provider}_${DateTime.now().millisecondsSinceEpoch}';
       await _api.syncSocial(

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
@@ -10,13 +11,26 @@ import '../features/slots/slots_screen.dart';
 import '../features/vip/vip_screen.dart';
 import '../providers/auth_provider.dart';
 
+/// Notifier so GoRouter refreshes redirects without being recreated.
+/// Recreating the router (via ref.watch) resets navigation — e.g. leaving /slots
+/// every time the balance updates.
+class _RouterRefresh extends ChangeNotifier {
+  void ping() => notifyListeners();
+}
+
 final routerProvider = Provider<GoRouter>((ref) {
-  final authState = ref.watch(authProvider);
+  final refresh = _RouterRefresh();
+  ref.onDispose(refresh.dispose);
+
+  ref.listen(authProvider, (_, __) => refresh.ping());
 
   return GoRouter(
     initialLocation: '/auth',
+    refreshListenable: refresh,
     redirect: (context, state) {
-      // Stay on current route while session bootstrap is in flight.
+      final authState = ref.read(authProvider);
+
+      // Stay put while session bootstrap / login is in flight.
       if (authState.isLoading) return null;
 
       final isAuth = authState.valueOrNull != null;

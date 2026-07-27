@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../core/theme.dart';
@@ -27,21 +28,29 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
 
   Future<void> _spin() async {
     if (_spinning) return;
-    setState(() => _spinning = true);
+    setState(() {
+      _spinning = true;
+      _lastWin = null;
+    });
     try {
       final result = await ref.read(apiClientProvider).spinSlots(_bet);
+      if (!mounted) return;
       for (final cascade in result.cascades) {
+        if (!mounted) return;
         setState(() => _grid = cascade.grid);
         await Future.delayed(const Duration(milliseconds: 600));
         if (cascade.wins.isNotEmpty) {
+          if (!mounted) return;
           setState(() {
             _lastWin = '+${NumberFormat('#,###').format(cascade.wins.first.payout)}';
           });
           await Future.delayed(const Duration(milliseconds: 800));
         }
       }
+      if (!mounted) return;
       ref.read(authProvider.notifier).updateBalance(result.balance);
       _spinCount++;
+      // Ads after spin — never navigate away from this screen.
       if (_spinCount % 10 == 0) {
         await AdsService.showInterstitial();
       }
@@ -77,7 +86,7 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
                   children: [
                     IconButton(
                       icon: const Icon(Icons.arrow_back),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => context.pop(),
                     ),
                     const Expanded(
                       child: Text(
