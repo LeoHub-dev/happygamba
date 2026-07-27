@@ -1,6 +1,7 @@
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import 'symbol_tile.dart';
 
@@ -57,23 +58,37 @@ class ReelColumnState extends State<ReelColumn>
     super.dispose();
   }
 
-  /// Spins the reel so [target] (length == rows) lands in the viewport.
-  /// Current symbols roll out; fillers and target roll in visibly.
+  Future<void> _ensureLaidOut() async {
+    if (_cellHeight > 0) return;
+    // Wait until LayoutBuilder has measured the reel viewport.
+    for (var i = 0; i < 8; i++) {
+      await SchedulerBinding.instance.endOfFrame;
+      if (!mounted) return;
+      if (_cellHeight > 0) return;
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+  }
+
+  List<String> get _currentVisible {
+    if (_strip.length >= widget.rows) {
+      return _strip.sublist(0, widget.rows);
+    }
+    return List<String>.from(widget.symbols);
+  }
+
+  /// Spins the reel so [target] lands in the viewport.
+  /// Always rolls fillers so losses still look like a real spin.
   Future<void> spinTo(
     List<String> target, {
     int fillerCount = 16,
     Duration duration = const Duration(milliseconds: 1150),
   }) async {
     assert(target.length == widget.rows);
-    if (_cellHeight <= 0) {
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-      if (!mounted || _cellHeight <= 0) return;
-    }
+    await _ensureLaidOut();
+    if (!mounted || _cellHeight <= 0) return;
 
     final rng = Random();
-    final start = List<String>.from(
-      _strip.length >= widget.rows ? _strip.sublist(0, widget.rows) : widget.symbols,
-    );
+    final start = _currentVisible;
     final fillers = List.generate(
       fillerCount,
       (_) => kSlotSymbols[rng.nextInt(kSlotSymbols.length)],
@@ -84,6 +99,10 @@ class ReelColumnState extends State<ReelColumn>
       _spinning = true;
       _controller.value = 0;
     });
+
+    // One frame so the new strip is built before animating.
+    await SchedulerBinding.instance.endOfFrame;
+    if (!mounted) return;
 
     final endOffset = (start.length + fillers.length) * _cellHeight;
     await _controller.animateTo(
@@ -106,17 +125,18 @@ class ReelColumnState extends State<ReelColumn>
     Duration duration = const Duration(milliseconds: 480),
   }) async {
     assert(target.length == widget.rows);
-    if (_cellHeight <= 0) {
-      await Future<void>.delayed(const Duration(milliseconds: 16));
-      if (!mounted || _cellHeight <= 0) return;
-    }
+    await _ensureLaidOut();
+    if (!mounted || _cellHeight <= 0) return;
 
+    final below = _currentVisible;
     setState(() {
-      // Target sits above the current visible strip, then we scroll it down.
-      _strip = [...target, ...List<String>.from(widget.symbols)];
+      _strip = [...target, ...below];
       _spinning = true;
       _controller.value = 0;
     });
+
+    await SchedulerBinding.instance.endOfFrame;
+    if (!mounted) return;
 
     await _controller.animateTo(
       target.length * _cellHeight,
@@ -142,8 +162,19 @@ class ReelColumnState extends State<ReelColumn>
         final displayStrip =
             _strip.isEmpty ? List<String>.from(widget.symbols) : _strip;
 
+        // Only build tiles near the viewport — avoids Column overflow on long strips.
+        final first = (_cellHeight > 0)
+            ? (offset / _cellHeight).floor().clamp(0, displayStrip.length - 1)
+            : 0;
+        final last = (_cellHeight > 0)
+            ? ((offset + constraints.maxHeight) / _cellHeight)
+                .ceil()
+                .clamp(0, displayStrip.length - 1)
+            : (widget.rows - 1);
+
         return ClipRect(
           child: Stack(
+            clipBehavior: Clip.hardEdge,
             children: [
               Container(
                 decoration: BoxDecoration(
@@ -158,28 +189,22 @@ class ReelColumnState extends State<ReelColumn>
                   ),
                 ),
               ),
-              Transform.translate(
-                offset: Offset(0, -offset),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (var i = 0; i < displayStrip.length; i++)
-                      SizedBox(
-                        height: _cellHeight,
-                        width: width,
-                        child: SymbolTile(
-                          symbol: displayStrip[i],
-                          highlighted: !_spinning &&
-                              i < widget.rows &&
-                              widget.highlightedRows.contains(i),
-                          dimmed: widget.dimmed &&
-                              !_spinning &&
-                              !widget.highlightedRows.contains(i),
-                        ),
-                      ),
-                  ],
+              for (var i = first; i <= last; i++)
+                Positioned(
+                  top: i * _cellHeight - offset,
+                  left: 0,
+                  width: width,
+                  height: _cellHeight,
+                  child: SymbolTile(
+                    symbol: displayStrip[i],
+                    highlighted: !_spinning &&
+                        i < widget.rows &&
+                        widget.highlightedRows.contains(i),
+                    dimmed: widget.dimmed &&
+                        !_spinning &&
+                        !widget.highlightedRows.contains(i),
+                  ),
                 ),
-              ),
               IgnorePointer(
                 child: Column(
                   children: [

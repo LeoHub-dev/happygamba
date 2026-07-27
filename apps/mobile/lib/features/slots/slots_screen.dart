@@ -58,17 +58,28 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
     return [for (var r = 0; r < _rows; r++) grid[r][col]];
   }
 
+  Future<ReelColumnState> _reelState(int col) async {
+    for (var i = 0; i < 10; i++) {
+      final state = _reelKeys[col].currentState;
+      if (state != null) return state;
+      await Future<void>.delayed(const Duration(milliseconds: 16));
+    }
+    throw StateError('Reel $col not ready');
+  }
+
   Future<void> _spinReelsTo(List<List<String>> target) async {
     final futures = <Future<void>>[];
     for (var c = 0; c < _cols; c++) {
       final col = c;
       futures.add(() async {
         await Future<void>.delayed(Duration(milliseconds: 80 * col));
-        await _reelKeys[col].currentState?.spinTo(
-              _columnSymbols(target, col),
-              fillerCount: 14 + col * 2,
-              duration: Duration(milliseconds: 950 + col * 90),
-            );
+        final reel = await _reelState(col);
+        // Always enough fillers so win AND loss spins are visibly rolling.
+        await reel.spinTo(
+          _columnSymbols(target, col),
+          fillerCount: 16 + col * 2,
+          duration: Duration(milliseconds: 1000 + col * 100),
+        );
       }());
     }
     await Future.wait(futures);
@@ -80,10 +91,11 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
       final col = c;
       futures.add(() async {
         await Future<void>.delayed(Duration(milliseconds: 40 * col));
-        await _reelKeys[col].currentState?.dropIn(
-              _columnSymbols(target, col),
-              duration: Duration(milliseconds: 420 + col * 40),
-            );
+        final reel = await _reelState(col);
+        await reel.dropIn(
+          _columnSymbols(target, col),
+          duration: Duration(milliseconds: 420 + col * 40),
+        );
       }());
     }
     await Future.wait(futures);
@@ -97,21 +109,21 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
     }
     if (!mounted) return;
 
+    final hasWin = cascade.wins.isNotEmpty;
     setState(() {
-      _grid = cascade.grid;
+      _grid = cascade.grid.map((row) => List<String>.from(row)).toList();
       _highlighted = cascade.winningCells;
-      _dimNonWins = cascade.wins.isNotEmpty;
-      if (cascade.wins.isNotEmpty) {
+      _dimNonWins = hasWin;
+      if (hasWin) {
         final payout = cascade.wins.fold<int>(0, (sum, w) => sum + w.payout);
         _lastWin = '+${NumberFormat('#,###').format(payout)}';
       }
     });
 
-    if (cascade.wins.isNotEmpty) {
-      await Future<void>.delayed(const Duration(milliseconds: 900));
-    } else {
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    }
+    // Hold landed result so the new grid is readable (especially losses).
+    await Future<void>.delayed(
+      Duration(milliseconds: hasWin ? 900 : 500),
+    );
 
     if (!mounted) return;
     setState(() {
@@ -133,12 +145,22 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
       final result = await ref.read(apiClientProvider).spinSlots(_bet);
       if (!mounted) return;
 
+      if (result.cascades.isEmpty) {
+        throw StateError('Spin returned no cascades');
+      }
+
       for (var i = 0; i < result.cascades.length; i++) {
         if (!mounted) return;
         await _playCascade(result.cascades[i], isFirst: i == 0);
       }
 
       if (!mounted) return;
+      // Sync grid to final cascade in case a reel finished early.
+      setState(() {
+        _grid = result.cascades.last.grid
+            .map((row) => List<String>.from(row))
+            .toList();
+      });
       ref.read(authProvider.notifier).updateBalance(result.balance);
       _spinCount++;
       if (_spinCount % 10 == 0) {
