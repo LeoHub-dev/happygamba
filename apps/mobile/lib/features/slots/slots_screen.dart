@@ -1,6 +1,7 @@
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter_animate/flutter_animate.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
@@ -8,6 +9,12 @@ import '../../core/theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../services/ads_service.dart';
 import '../../services/api_client.dart';
+import 'widgets/forest_backdrop.dart';
+import 'widgets/reel_column.dart';
+import 'widgets/slot_machine_frame.dart';
+import 'widgets/spin_controls.dart';
+import 'widgets/symbol_tile.dart';
+import 'widgets/win_overlay.dart';
 
 class SlotsScreen extends ConsumerStatefulWidget {
   const SlotsScreen({super.key});
@@ -17,40 +24,123 @@ class SlotsScreen extends ConsumerStatefulWidget {
 }
 
 class _SlotsScreenState extends ConsumerState<SlotsScreen> {
+  static const _rows = 5;
+  static const _cols = 5;
   static const _betSteps = [500, 1000, 2000, 5000];
+
+  final List<GlobalKey<ReelColumnState>> _reelKeys =
+      List.generate(5, (_) => GlobalKey<ReelColumnState>());
+
   int _betIndex = 1;
   bool _spinning = false;
-  List<List<String>> _grid = List.generate(5, (_) => List.filled(5, '?'));
+  late List<List<String>> _grid;
+  Set<(int, int)> _highlighted = {};
+  bool _dimNonWins = false;
   String? _lastWin;
   int _spinCount = 0;
 
+  @override
+  void initState() {
+    super.initState();
+    final rng = Random();
+    _grid = List.generate(
+      _rows,
+      (_) => List.generate(
+        _cols,
+        (_) => kSlotSymbols[rng.nextInt(kSlotSymbols.length)],
+      ),
+    );
+  }
+
   int get _bet => _betSteps[_betIndex];
+
+  List<String> _columnSymbols(List<List<String>> grid, int col) {
+    return [for (var r = 0; r < _rows; r++) grid[r][col]];
+  }
+
+  Future<void> _spinReelsTo(List<List<String>> target) async {
+    final futures = <Future<void>>[];
+    for (var c = 0; c < _cols; c++) {
+      final col = c;
+      futures.add(() async {
+        await Future<void>.delayed(Duration(milliseconds: 80 * col));
+        await _reelKeys[col].currentState?.spinTo(
+              _columnSymbols(target, col),
+              fillerCount: 14 + col * 2,
+              duration: Duration(milliseconds: 950 + col * 90),
+            );
+      }());
+    }
+    await Future.wait(futures);
+  }
+
+  Future<void> _dropReelsTo(List<List<String>> target) async {
+    final futures = <Future<void>>[];
+    for (var c = 0; c < _cols; c++) {
+      final col = c;
+      futures.add(() async {
+        await Future<void>.delayed(Duration(milliseconds: 40 * col));
+        await _reelKeys[col].currentState?.dropIn(
+              _columnSymbols(target, col),
+              duration: Duration(milliseconds: 420 + col * 40),
+            );
+      }());
+    }
+    await Future.wait(futures);
+  }
+
+  Future<void> _playCascade(CascadeStep cascade, {required bool isFirst}) async {
+    if (isFirst) {
+      await _spinReelsTo(cascade.grid);
+    } else {
+      await _dropReelsTo(cascade.grid);
+    }
+    if (!mounted) return;
+
+    setState(() {
+      _grid = cascade.grid;
+      _highlighted = cascade.winningCells;
+      _dimNonWins = cascade.wins.isNotEmpty;
+      if (cascade.wins.isNotEmpty) {
+        final payout = cascade.wins.fold<int>(0, (sum, w) => sum + w.payout);
+        _lastWin = '+${NumberFormat('#,###').format(payout)}';
+      }
+    });
+
+    if (cascade.wins.isNotEmpty) {
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+    } else {
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _highlighted = {};
+      _dimNonWins = false;
+    });
+  }
 
   Future<void> _spin() async {
     if (_spinning) return;
     setState(() {
       _spinning = true;
       _lastWin = null;
+      _highlighted = {};
+      _dimNonWins = false;
     });
+
     try {
       final result = await ref.read(apiClientProvider).spinSlots(_bet);
       if (!mounted) return;
-      for (final cascade in result.cascades) {
+
+      for (var i = 0; i < result.cascades.length; i++) {
         if (!mounted) return;
-        setState(() => _grid = cascade.grid);
-        await Future.delayed(const Duration(milliseconds: 600));
-        if (cascade.wins.isNotEmpty) {
-          if (!mounted) return;
-          setState(() {
-            _lastWin = '+${NumberFormat('#,###').format(cascade.wins.first.payout)}';
-          });
-          await Future.delayed(const Duration(milliseconds: 800));
-        }
+        await _playCascade(result.cascades[i], isFirst: i == 0);
       }
+
       if (!mounted) return;
       ref.read(authProvider.notifier).updateBalance(result.balance);
       _spinCount++;
-      // Ads after spin — never navigate away from this screen.
       if (_spinCount % 10 == 0) {
         await AdsService.showInterstitial();
       }
@@ -66,205 +156,98 @@ class _SlotsScreenState extends ConsumerState<SlotsScreen> {
   @override
   Widget build(BuildContext context) {
     final balance = ref.watch(authProvider).valueOrNull?.balance ?? 0;
-    final formatter = NumberFormat('#,###', 'es');
 
     return Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF0A2E1A), Color(0xFF0D1117), Color(0xFF1A0A2E)],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-          ),
-        ),
+      body: ForestBackdrop(
         child: SafeArea(
           child: Column(
             children: [
               Padding(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.fromLTRB(8, 4, 8, 0),
                 child: Row(
                   children: [
                     IconButton(
                       icon: const Icon(Icons.arrow_back),
-                      onPressed: () => context.pop(),
+                      onPressed: _spinning ? null : () => context.pop(),
                     ),
                     const Expanded(
                       child: Text(
-                        'Lucky Forest Slots',
+                        'Lucky Forest',
                         textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: AppTheme.accentGreen),
+                        style: TextStyle(
+                          fontSize: 22,
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.accentGreen,
+                          letterSpacing: 0.5,
+                          shadows: [Shadow(color: Colors.black54, blurRadius: 8)],
+                        ),
                       ),
                     ),
                     const SizedBox(width: 48),
                   ],
                 ),
               ),
-              _multiplierLegend(),
+              const MultiplierLegend(),
               Expanded(
                 child: Stack(
                   alignment: Alignment.center,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                      child: _slotGrid(),
-                    ),
-                    if (_lastWin != null)
-                      Text(
-                        _lastWin!,
-                        style: const TextStyle(
-                          fontSize: 36,
-                          fontWeight: FontWeight.bold,
-                          color: AppTheme.accentGold,
-                          shadows: [Shadow(color: Colors.black, blurRadius: 8)],
-                        ),
-                      ).animate().scale().fadeIn().then().fadeOut(delay: 600.ms),
-                  ],
-                ),
-              ),
-              _controlBar(balance, formatter),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _multiplierLegend() {
-    const tiers = [
-      ('🥉', '0.2-4x'),
-      ('🥈', '5-10x'),
-      ('🥇', '20-50x'),
-      ('💎', '100-500x'),
-    ];
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: tiers
-            .map((t) => Column(
-                  children: [
-                    Text(t.$1, style: const TextStyle(fontSize: 20)),
-                    Text(t.$2, style: const TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-                  ],
-                ))
-            .toList(),
-      ),
-    );
-  }
-
-  Widget _slotGrid() {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF5D4037), width: 3),
-      ),
-      child: Column(
-        children: List.generate(5, (r) {
-          return Expanded(
-            child: Row(
-              children: List.generate(5, (c) {
-                final sym = _grid[r][c];
-                return Expanded(
-                  child: Container(
-                    margin: const EdgeInsets.all(2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1B2838),
-                      borderRadius: BorderRadius.circular(6),
-                      border: sym == 'W'
-                          ? Border.all(color: AppTheme.accentGold, width: 2)
-                          : null,
-                    ),
-                    child: Center(
-                      child: Text(
-                        _symbolLabel(sym),
-                        style: TextStyle(
-                          fontSize: sym.length > 2 ? 10 : 16,
-                          fontWeight: FontWeight.bold,
-                          color: _symbolColor(sym),
+                    SlotMachineFrame(
+                      child: Padding(
+                        padding: const EdgeInsets.all(4),
+                        child: Row(
+                          children: [
+                            for (var c = 0; c < _cols; c++) ...[
+                              if (c > 0)
+                                Container(
+                                  width: 2,
+                                  margin: const EdgeInsets.symmetric(vertical: 6),
+                                  decoration: BoxDecoration(
+                                    gradient: LinearGradient(
+                                      begin: Alignment.topCenter,
+                                      end: Alignment.bottomCenter,
+                                      colors: [
+                                        Colors.transparent,
+                                        AppTheme.accentGold.withValues(alpha: 0.35),
+                                        Colors.transparent,
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              Expanded(
+                                child: ReelColumn(
+                                  key: _reelKeys[c],
+                                  rows: _rows,
+                                  symbols: _columnSymbols(_grid, c),
+                                  highlightedRows: {
+                                    for (final cell in _highlighted)
+                                      if (cell.$2 == c) cell.$1,
+                                  },
+                                  dimmed: _dimNonWins,
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ),
-                  ),
-                );
-              }),
-            ),
-          );
-        }),
-      ),
-    );
-  }
-
-  String _symbolLabel(String sym) {
-    const map = {
-      'HAT': '🎩',
-      'BOOT': '👢',
-      'MUG': '🍺',
-      'DICE': '🎲',
-      'W': 'W',
-      'FS': 'FS',
-    };
-    return map[sym] ?? sym;
-  }
-
-  Color _symbolColor(String sym) {
-    if (sym == 'W') return AppTheme.accentGold;
-    if (sym == 'FS') return AppTheme.accentGreen;
-    return Colors.white;
-  }
-
-  Widget _controlBar(int balance, NumberFormat formatter) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      color: Colors.black.withValues(alpha: 0.7),
-      child: Row(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('SALDO', style: TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-              Text(formatter.format(balance), style: const TextStyle(fontWeight: FontWeight.bold)),
-            ],
-          ),
-          const Spacer(),
-          IconButton(
-            onPressed: _betIndex > 0 ? () => setState(() => _betIndex--) : null,
-            icon: const Icon(Icons.remove_circle_outline),
-          ),
-          Column(
-            children: [
-              const Text('APUESTA', style: TextStyle(fontSize: 10, color: AppTheme.textMuted)),
-              Text(formatter.format(_bet)),
-            ],
-          ),
-          IconButton(
-            onPressed: _betIndex < _betSteps.length - 1 ? () => setState(() => _betIndex++) : null,
-            icon: const Icon(Icons.add_circle_outline),
-          ),
-          const SizedBox(width: 12),
-          GestureDetector(
-            onTap: _spinning ? null : _spin,
-            child: Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: _spinning ? Colors.grey : AppTheme.accentGreen,
-                boxShadow: [
-                  BoxShadow(color: AppTheme.accentGreen.withValues(alpha: 0.4), blurRadius: 12),
-                ],
+                    if (_lastWin != null) WinOverlay(text: _lastWin!),
+                  ],
+                ),
               ),
-              child: _spinning
-                  ? const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: CircularProgressIndicator(color: Colors.black, strokeWidth: 3),
-                    )
-                  : const Icon(Icons.refresh, size: 32, color: Colors.black),
-            ),
+              SpinControls(
+                balance: balance,
+                bet: _bet,
+                spinning: _spinning,
+                canDecreaseBet: _betIndex > 0,
+                canIncreaseBet: _betIndex < _betSteps.length - 1,
+                onDecreaseBet: () => setState(() => _betIndex--),
+                onIncreaseBet: () => setState(() => _betIndex++),
+                onSpin: _spin,
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
