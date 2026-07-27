@@ -45,6 +45,10 @@ flutter build ios --dart-define=API_BASE_URL=https://api.happygamba.com
 ### AdMob
 Reemplazar test ad unit IDs en `lib/services/ads_service.dart` con IDs de producción.
 
+**Importante:** Android requiere `com.google.android.gms.ads.APPLICATION_ID` en
+`AndroidManifest.xml` e iOS requiere `GADApplicationIdentifier` en `Info.plist`.
+Sin eso, la app puede crashear al arrancar **sin logs de Dart**.
+
 ### RevenueCat
 Configurar API key real en `lib/services/purchases_service.dart` y productos en dashboard:
 - `coins_50k`, `coins_200k`, `coins_1m`
