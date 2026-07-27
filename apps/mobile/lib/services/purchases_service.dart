@@ -1,3 +1,6 @@
+import 'dart:developer' as developer;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:purchases_flutter/purchases_flutter.dart';
@@ -19,8 +22,14 @@ class CoinProduct {
   final int coins;
 }
 
+/// RevenueCat wrapper. Stays in mock mode unless a real API key is provided
+/// via `--dart-define=REVENUECAT_API_KEY=...` — configuring with a fake key
+/// can native-crash on some platforms.
 class PurchasesService {
   static bool _mockMode = true;
+  static bool _initialized = false;
+
+  static const _apiKey = String.fromEnvironment('REVENUECAT_API_KEY');
 
   static final coinProducts = [
     CoinProduct(
@@ -47,13 +56,28 @@ class PurchasesService {
   ];
 
   static Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+
+    if (kIsWeb || _apiKey.isEmpty) {
+      _mockMode = true;
+      developer.log(
+        'RevenueCat mock mode (no REVENUECAT_API_KEY)',
+        name: 'PurchasesService',
+      );
+      return;
+    }
+
     try {
       await Purchases.setLogLevel(LogLevel.debug);
-      await Purchases.configure(
-        PurchasesConfiguration('appl_mock_key_for_dev'),
-      );
+      await Purchases.configure(PurchasesConfiguration(_apiKey));
       _mockMode = false;
-    } catch (_) {
+    } catch (e, st) {
+      developer.log(
+        'Purchases configure failed: $e',
+        name: 'PurchasesService',
+        stackTrace: st,
+      );
       _mockMode = true;
     }
   }
@@ -61,8 +85,9 @@ class PurchasesService {
   static Future<void> purchaseProduct(String productId, WidgetRef ref) async {
     final context = ref.context;
     if (_mockMode) {
-      if (context.mounted) _showMockPurchase(context, 'Compra simulada: $productId');
-      await ref.read(authProvider.notifier).refreshProfile();
+      if (context.mounted) {
+        _showMockPurchase(context, 'Compra simulada: $productId');
+      }
       return;
     }
     try {
@@ -82,7 +107,9 @@ class PurchasesService {
   static Future<void> purchaseVip(WidgetRef ref) async {
     final context = ref.context;
     if (_mockMode) {
-      if (context.mounted) _showMockPurchase(context, 'VIP activado (modo demo)');
+      if (context.mounted) {
+        _showMockPurchase(context, 'VIP activado (modo demo)');
+      }
       return;
     }
     try {
@@ -100,7 +127,9 @@ class PurchasesService {
   static Future<void> purchaseAdFree(WidgetRef ref) async {
     final context = ref.context;
     if (_mockMode) {
-      if (context.mounted) _showMockPurchase(context, 'Sin ads activado (modo demo)');
+      if (context.mounted) {
+        _showMockPurchase(context, 'Sin ads activado (modo demo)');
+      }
       return;
     }
     try {
@@ -118,7 +147,9 @@ class PurchasesService {
   static Future<void> restorePurchases(WidgetRef ref) async {
     final context = ref.context;
     if (_mockMode) {
-      if (context.mounted) _showMockPurchase(context, 'Restauración simulada');
+      if (context.mounted) {
+        _showMockPurchase(context, 'Restauración simulada');
+      }
       return;
     }
     await Purchases.restorePurchases();

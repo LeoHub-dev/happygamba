@@ -16,6 +16,9 @@ final routerProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/auth',
     redirect: (context, state) {
+      // Stay on current route while session bootstrap is in flight.
+      if (authState.isLoading) return null;
+
       final isAuth = authState.valueOrNull != null;
       final onAuth = state.matchedLocation == '/auth';
       if (!isAuth && !onAuth) return '/auth';

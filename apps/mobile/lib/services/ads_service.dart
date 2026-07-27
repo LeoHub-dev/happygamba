@@ -1,12 +1,30 @@
+import 'dart:developer' as developer;
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_mobile_ads/google_mobile_ads.dart';
 
+/// AdMob integration with safe fallbacks.
+///
+/// Requires `com.google.android.gms.ads.APPLICATION_ID` in AndroidManifest and
+/// `GADApplicationIdentifier` in iOS Info.plist — otherwise the process can
+/// native-crash before any Dart logs appear.
 class AdsService {
   static bool _mockMode = true;
   static BannerAd? _bannerAd;
   static int _interstitialCounter = 0;
+  static bool _initialized = false;
 
   static Future<void> initialize() async {
+    if (_initialized) return;
+    _initialized = true;
+
+    // Skip native SDK on web / when explicitly disabled.
+    if (kIsWeb) {
+      _mockMode = true;
+      return;
+    }
+
     try {
       await MobileAds.instance.initialize();
       _mockMode = false;
@@ -15,12 +33,19 @@ class AdsService {
         size: AdSize.banner,
         request: const AdRequest(),
         listener: BannerAdListener(
-          onAdFailedToLoad: (_, __) => _mockMode = true,
+          onAdFailedToLoad: (ad, error) {
+            developer.log('Banner failed: $error', name: 'AdsService');
+            ad.dispose();
+            _bannerAd = null;
+            _mockMode = true;
+          },
         ),
       );
       await _bannerAd?.load();
-    } catch (_) {
+    } catch (e, st) {
+      developer.log('Ads initialize error: $e', name: 'AdsService', stackTrace: st);
       _mockMode = true;
+      _bannerAd = null;
     }
   }
 
@@ -29,7 +54,10 @@ class AdsService {
       return Container(
         color: const Color(0xFF161B22),
         alignment: Alignment.center,
-        child: const Text('Publicidad', style: TextStyle(color: Color(0xFF8B949E), fontSize: 12)),
+        child: const Text(
+          'Publicidad',
+          style: TextStyle(color: Color(0xFF8B949E), fontSize: 12),
+        ),
       );
     }
     return AdWidget(ad: _bannerAd!);
@@ -40,18 +68,21 @@ class AdsService {
     _interstitialCounter++;
     if (_interstitialCounter % 3 != 0) return;
 
-    final ad = InterstitialAd.load(
+    await InterstitialAd.load(
       adUnitId: 'ca-app-pub-3940256099942544/1033173712',
       request: const AdRequest(),
       adLoadCallback: InterstitialAdLoadCallback(
         onAdLoaded: (ad) => ad.show(),
-        onAdFailedToLoad: (_) {},
+        onAdFailedToLoad: (error) {
+          developer.log('Interstitial failed: $error', name: 'AdsService');
+        },
       ),
     );
-    await ad;
   }
 
-  static Future<void> showRewardedAd({required Future<void> Function() onReward}) async {
+  static Future<void> showRewardedAd({
+    required Future<void> Function() onReward,
+  }) async {
     if (_mockMode) {
       await onReward();
       return;
